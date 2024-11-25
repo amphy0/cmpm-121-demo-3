@@ -1,4 +1,4 @@
-// @deno-types="npm:@types/leaflet@^1.9.14"
+﻿// @deno-types="npm:@types/leaflet@^1.9.14"
 import leaflet from "leaflet";
 
 // Style sheets
@@ -8,7 +8,7 @@ import "./style.css";
 // Fix missing marker images
 import "./leafletWorkaround.ts";
 
-import { Board, Cell, Coin } from "./board.ts";
+import { Board, Cache, Cell, Coin } from "./board.ts";
 
 // Deterministic random number generator
 import luck from "./luck.ts";
@@ -25,7 +25,11 @@ const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 
 const playerWallet: Coin[] = [];
 
-//UI
+// Memento pattern: cache state tracking
+const cacheStates: Map<string, Coin[]> = new Map();
+const activeCacheRects: Map<string, leaflet.Rectangle> = new Map();
+
+// UI
 const app = document.getElementById("app")!;
 const gameName = "Geocoin Carrier";
 document.title = gameName;
@@ -43,6 +47,15 @@ mapPanel.id = "map";
 const statusPanel = document.createElement("div");
 app.appendChild(statusPanel);
 statusPanel.innerHTML = `Player has ${playerWallet.length} coins.`;
+
+const movePanel = document.createElement("div");
+movePanel.innerHTML = `
+<button id="move-up">⬆️</button>
+<button id="move-left">⬅️</button>
+<button id="move-down">⬇️</button>
+<button id="move-right">➡️</button>
+`;
+controlPanel.appendChild(movePanel);
 
 const map = leaflet.map(mapPanel, {
   center: OAKES_CLASSROOM,
@@ -66,11 +79,51 @@ const playerMarker = leaflet.marker(OAKES_CLASSROOM);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
+function movePlayer(deltaLat: number, deltaLng: number) {
+  const playerLat = playerMarker.getLatLng().lat + deltaLat;
+  const playerLng = playerMarker.getLatLng().lng + deltaLng;
+  const location = leaflet.latLng(playerLat, playerLng);
+  playerMarker.setLatLng(location);
+  populateMap();
+}
+
+// Attach button event listeners
+document
+  .getElementById("move-up")!
+  .addEventListener("click", () => movePlayer(TILE_DEGREES, 0));
+document
+  .getElementById("move-down")!
+  .addEventListener("click", () => movePlayer(-TILE_DEGREES, 0));
+document
+  .getElementById("move-left")!
+  .addEventListener("click", () => movePlayer(0, -TILE_DEGREES));
+document
+  .getElementById("move-right")!
+  .addEventListener("click", () => movePlayer(0, TILE_DEGREES));
+
 function populateMap() {
-  const location = OAKES_CLASSROOM;
+  const location = playerMarker.getLatLng();
+  const visibleCells = new Set<string>();
+
   for (const neighbor of board.getCellsNearPoint(location)) {
-    if (cellLuck(neighbor) < CACHE_SPAWN_PROBABILITY) {
+    const cellKey = cellToString(neighbor);
+    visibleCells.add(cellKey);
+
+    if (
+      !cacheStates.has(cellKey) &&
+      cellLuck(neighbor) < CACHE_SPAWN_PROBABILITY
+    ) {
       spawnCache(neighbor);
+    } else if (cacheStates.has(cellKey) && !activeCacheRects.has(cellKey)) {
+      restoreCache(neighbor);
+    }
+  }
+
+  // Remove caches that are no longer in range
+  for (const [cellKey, rect] of activeCacheRects) {
+    if (!visibleCells.has(cellKey)) {
+      rect.remove();
+      activeCacheRects.delete(cellKey);
     }
   }
 }
@@ -80,47 +133,68 @@ function spawnCache(cellToSpawn: Cell) {
   const pointValue = Math.floor(cellLuck(cellToSpawn) * 100);
   const cache = board.createNewCache(cellToSpawn, pointValue);
 
-  // Add a rectangle to the map to represent the cache
+  cacheStates.set(cellToString(cellToSpawn), [...cache.coins]);
+
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
+  activeCacheRects.set(cellToString(cellToSpawn), rect);
 
-  // Handle interactions with the cache
-  rect.bindPopup(() => {
-    // The popup offers a description and button
-    const popupDiv = document.createElement("div");
-    popupDiv.innerHTML = `
-                <div>There is a cache here at "${
-      cellToString(cellToSpawn)
-    }". There are <span id="value">${cache.coins.length}</span> coins here.</div>
-                <button id="collect">Collect</button><button id="deposit">Deposit</button>`;
-
-    popupDiv
-      .querySelector<HTMLButtonElement>("#collect")!
-      .addEventListener("click", () => {
-        if (cache.coins.length > 0) {
-          const coin = cache.coins.pop()!;
-          popupDiv.querySelector<HTMLSpanElement>(
-            "#value",
-          )!.innerHTML = cache.coins.length.toString();
-          playerWallet.push(coin);
-          statusPanel.innerHTML = `coin serial number: ${serializeCoin(coin)}`;
-        }
-      });
-    popupDiv
-      .querySelector<HTMLButtonElement>("#deposit")!
-      .addEventListener("click", () => {
-        if (playerWallet.length > 0) { // Ensure the wallet is not empty
-          const coin = playerWallet.pop()!;
-          cache.coins.push(coin);
-          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = cache
-            .coins.length.toString();
-          statusPanel.innerHTML = `Left coin: ${serializeCoin(coin)}`;
-        }
-      });
-
-    return popupDiv;
-  });
+  rect.bindPopup(() => createPopupContent(cache, cellToSpawn));
 }
+
+function restoreCache(cell: Cell) {
+  const savedCoins = cacheStates.get(cellToString(cell))!;
+  const bounds = board.getCellBounds(cell);
+  const cache = {
+    location: cell,
+    coins: [...savedCoins],
+    serialNumber: savedCoins.length,
+  };
+
+  const rect = leaflet.rectangle(bounds);
+  rect.addTo(map);
+  activeCacheRects.set(cellToString(cell), rect);
+
+  rect.bindPopup(() => createPopupContent(cache, cell));
+}
+
+function createPopupContent(cache: Cache, cell: Cell): HTMLElement {
+  const popupDiv = document.createElement("div");
+  popupDiv.innerHTML = `
+<div>There is a cache here at "${cellToString(cell)}". 
+There are <span id="value">${cache.coins.length}</span> coins here.</div>
+<button id="collect">Collect</button>
+<button id="deposit">Deposit</button>`;
+
+  popupDiv
+    .querySelector<HTMLButtonElement>("#collect")!
+    .addEventListener("click", () => {
+      if (cache.coins.length > 0) {
+        const coin = cache.coins.pop()!;
+        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerText = cache
+          .coins.length.toString();
+        playerWallet.push(coin);
+        statusPanel.innerHTML = `Collected coin: ${serializeCoin(coin)}`;
+        cacheStates.set(cellToString(cell), [...cache.coins]); // Save updated state
+      }
+    });
+
+  popupDiv
+    .querySelector<HTMLButtonElement>("#deposit")!
+    .addEventListener("click", () => {
+      if (playerWallet.length > 0) {
+        const coin = playerWallet.pop()!;
+        cache.coins.push(coin);
+        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerText = cache
+          .coins.length.toString();
+        statusPanel.innerHTML = `Deposited coin: ${serializeCoin(coin)}`;
+        cacheStates.set(cellToString(cell), [...cache.coins]);
+      }
+    });
+
+  return popupDiv;
+}
+
 function serializeCoin(coin: Coin): string {
   return `${coin.spawnLocation.i}:${coin.spawnLocation.j}#${coin.serial}`;
 }
