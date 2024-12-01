@@ -57,6 +57,11 @@ movePanel.innerHTML = `
 `;
 controlPanel.appendChild(movePanel);
 
+const autoUpdateButton = document.createElement("button");
+autoUpdateButton.id = "auto-update";
+autoUpdateButton.innerHTML = "🌐";
+controlPanel.appendChild(autoUpdateButton);
+
 const map = leaflet.map(mapPanel, {
   center: OAKES_CLASSROOM,
   zoom: GAMEPLAY_ZOOM_LEVEL,
@@ -100,6 +105,38 @@ document
 document
   .getElementById("move-right")!
   .addEventListener("click", () => movePlayer(0, TILE_DEGREES));
+
+let geolocationWatchId: number | null = null;
+
+// Enable or disable automatic geolocation updates
+autoUpdateButton.addEventListener("click", () => {
+  if (geolocationWatchId === null) {
+    if ("geolocation" in navigator) {
+      autoUpdateButton.innerHTML = "🌐 (on)";
+      geolocationWatchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          const newLocation = leaflet.latLng(latitude, longitude);
+          playerMarker.setLatLng(newLocation);
+          map.setView(newLocation, GAMEPLAY_ZOOM_LEVEL); // Snap the map to the player's location
+          populateMap();
+        },
+        (error) => {
+          console.error("Error watching geolocation:", error);
+          statusPanel.innerHTML = "Geolocation error.";
+        },
+        { enableHighAccuracy: true },
+      );
+    } else {
+      statusPanel.innerHTML = "Geolocation is not supported by your browser.";
+    }
+  } else {
+    // Disable geolocation updates
+    navigator.geolocation.clearWatch(geolocationWatchId);
+    geolocationWatchId = null;
+    autoUpdateButton.innerHTML = "🌐";
+  }
+});
 
 function populateMap() {
   const location = playerMarker.getLatLng();
