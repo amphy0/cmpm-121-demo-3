@@ -204,8 +204,7 @@ document.getElementById("reset-game")!.addEventListener("click", () => {
 });
 
 function populateMap() {
-  const location = playerMarker.getLatLng();
-  const visibleCells = new Set<string>();
+  const visibleCells = getVisibleCells(playerMarker.getLatLng());
 
   for (const neighbor of board.getCellsNearPoint(location)) {
     const cellKey = cellToString(neighbor);
@@ -220,7 +219,20 @@ function populateMap() {
       restoreCache(neighbor);
     }
   }
+  removeInactiveCaches(visibleCells);
+}
+function getVisibleCells(location: leaflet.LatLng): Set<string> {
+  const visibleCells = new Set<string>(); // Store all visible cell keys
+  const nearbyCells = board.getCellsNearPoint(location); // Get neighboring cells
 
+  for (const neighbor of nearbyCells) {
+    visibleCells.add(cellToString(neighbor)); // Convert each cell to a string key
+  }
+
+  return visibleCells; // Return the set of visible cell keys
+}
+
+function removeInactiveCaches(visibleCells: Set<string>): void {
   // Remove caches that are no longer in range
   for (const [cellKey, rect] of activeCacheRects) {
     if (!visibleCells.has(cellKey)) {
