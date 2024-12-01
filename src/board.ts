@@ -92,4 +92,14 @@ export class Board {
     }
     return newCache;
   }
+  getCellAtKey(cellKey: string): Cell {
+    const [i, j] = cellKey.split(":").map(Number);
+
+    // Validate the key (optional, but useful for robust code)
+    if (isNaN(i) || isNaN(j)) {
+      throw new Error(`Invalid cellKey format: ${cellKey}`);
+    }
+
+    return { i, j }; // Return as Cell object
+  }
 }

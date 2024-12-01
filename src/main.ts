@@ -206,20 +206,29 @@ document.getElementById("reset-game")!.addEventListener("click", () => {
 function populateMap() {
   const visibleCells = getVisibleCells(playerMarker.getLatLng());
 
-  for (const neighbor of board.getCellsNearPoint(location)) {
-    const cellKey = cellToString(neighbor);
-    visibleCells.add(cellKey);
+  for (const cellKey of visibleCells) {
+    const cell = board.getCellAtKey(cellKey); // Convert key to Cell object
+    spawnCacheIfNeeded(cell, cellKey);
+    restoreCacheIfNeeded(cell, cellKey);
+  }
 
-    if (
-      !cacheStates.has(cellKey) &&
-      cellLuck(neighbor) < CACHE_SPAWN_PROBABILITY
-    ) {
-      spawnCache(neighbor);
-    } else if (cacheStates.has(cellKey) && !activeCacheRects.has(cellKey)) {
-      restoreCache(neighbor);
+  removeInactiveCaches(visibleCells);
+}
+function spawnCacheIfNeeded(cell: Cell, cellKey: string): void {
+  // Check if this cell already has a cache
+  if (!cacheStates.has(cellKey)) {
+    // Determine if a cache should spawn based on probability
+    if (cellLuck(cell) < CACHE_SPAWN_PROBABILITY) {
+      spawnCache(cell); // Handles the actual spawning
     }
   }
-  removeInactiveCaches(visibleCells);
+}
+
+function restoreCacheIfNeeded(cell: Cell, cellKey: string): void {
+  // Check if the cache exists but is not currently active
+  if (cacheStates.has(cellKey) && !activeCacheRects.has(cellKey)) {
+    restoreCache(cell); // Handles the actual restoration to the map
+  }
 }
 function getVisibleCells(location: leaflet.LatLng): Set<string> {
   const visibleCells = new Set<string>(); // Store all visible cell keys
